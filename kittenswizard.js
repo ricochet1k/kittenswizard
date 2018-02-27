@@ -5,6 +5,7 @@
     jobsTotalRatio: 0,
     jobsNext: "",
     jobsWant: {},
+    btnPrices: {},
   };
   
   let jobsMap = {};
@@ -38,14 +39,39 @@
       el: vueEl,
       template: `
 <div id="vueAppEl">
-jobs (total {{jobsTotalRatio}}):
-<div v-for="jobs, name in jobsWant" :class="{want: jobs.want > jobs.have}" >{{name}}: {{jobs.want.toFixed(1)}} / {{jobs.have}}</div>
+  <div id="jobs">
+    jobs (total {{jobsTotalRatio}}):
+    <table>
+      <tr v-for="jobs, name in jobsWant" :class="{want: jobs.want > jobs.have}" ><td>{{name}}: </td><td>{{jobs.want.toFixed(1)}} / {{jobs.have}}</td></tr>
+    </table>
+  </div>
+  <div id="prices">
+    btn prices:
+    <table>
+      <tr v-for="price, name in btnPrices" :class="{want: price > have(name)}" ><td>{{name}}: </td><td>{{display(price)}} / {{display(have(name))}}</td></tr>
+    </table>
 </div>
       `,
       data() {
         let v = vis;
         vis = this;
         return v;
+      },
+      methods: {
+        have(name) {
+          return r[name].value;
+        },
+        display(val) {
+          const units = ' KMGTP?';
+          let u = 0;
+          while(val > 10000) {
+            val /= 1000;
+            u += 1;
+          }
+          if (val - (val | 0))
+            val = val.toFixed(1);
+          return val + (u? units[u] : '');
+        }
       },
     });
   }
@@ -85,7 +111,7 @@ jobs (total {{jobsTotalRatio}}):
   vueStyleTag.innerText = `
 #vueAppEl {
   border-radius: 10px;
-box-shadow: 2px 2px 5px;
+  box-shadow: 2px 2px 5px;
   background-color: white;
   padding: 10px;
   position: absolute;
@@ -94,6 +120,12 @@ box-shadow: 2px 2px 5px;
 }
 #vueAppEl .want {
   font-weight: bold;
+}
+#vueAppEl table {
+  border-spacing: 0;
+}
+#vueAppEl table td {
+  padding: 0 3px;
 }
 `;
   
@@ -180,15 +212,15 @@ box-shadow: 2px 2px 5px;
   const keeps = {
     catnip: 15000,
     //beam: 200,
-    gold: 5000,
-    parchment: 0, //500,
-    titanium: 15,
+    //gold: 5000,
+//     parchment: 0, //500,
+//     titanium: 15,
     //manuscript: 500,
     //compedium: 1000,
      //science: 85000,
   };
   
-  let btnKeeps = {};
+  let btnPrices = {};
 
   // {max: 500, when: {res: 200}, atatime: 1, ratio: 0.99, debug: true}
   const autocraftSettings = {
@@ -209,11 +241,15 @@ box-shadow: 2px 2px 5px;
     kerosene: {},
 
     parchment: {max: 10000, quiet: true},
-    manuscript: {when: {parchment: 600}, quiet: true},
+    manuscript: {max: 2000, when: {parchment: 600}, quiet: true},
     compedium: {max: 4000, when: {manuscript: 500}}, // SIC
-    blueprint: {max: 25, when: {compedium: 200}},
+    blueprint: {max: 25, when: {compedium: 200}, debug: true},
   };
   
+  
+  function debug(dbg, ...msg) {
+    if (dbg) console.log(...msg);
+  }
   
   const r = game.resPool.resourceMap;
 
@@ -359,7 +395,8 @@ box-shadow: 2px 2px 5px;
   }
 
   function autocraft(res, opt) {
-    if (opt.max && r[res.name].value >= opt.max) return;
+    let max = opt.max? Math.max(opt.max, btnPrices[res.name] || 0) : null;
+    if (max && r[res.name].value >= max) return debug(opt.debug, res.name, ">=max", max, btnPrices[res.name]);
 
     if (!opt.when) opt.when = {};
 
@@ -412,8 +449,7 @@ box-shadow: 2px 2px 5px;
       if (multiple < canCraft)
         canCraft = multiple | 0;
       if (canCraft <= 0) {
-        if (opt.debug)
-          console.log("nocraft canCraft", res.name, name, p.value, multiple, canCraft);
+        //debug(opt.debug, "nocraft canCraft", res.name, name, p.value, multiple, canCraft);
         return;
       }
     }
@@ -424,16 +460,25 @@ box-shadow: 2px 2px 5px;
       let howmany = opt.atatime || canCraft;
       let ratio = 1 + gamePage.getResCraftRatio({name : res.name});
       let oldhowmany = howmany;
-      if (opt.max) howmany = Math.min(howmany, Math.ceil((opt.max - r[res.name].value) / ratio));
+      if (max) howmany = Math.min(howmany, Math.ceil((max - r[res.name].value) / ratio));
       if (!opt.quiet) console.log('autocrafting', res.name, howmany, "ratio:", ratio.toFixed(2), oldhowmany);
       game.workshop.craft(res.name, Math.max(0, howmany | 0), true); // don't undo
     }
   }
 
-  function autobuild(btn, opt, _keeps=keeps) {
+  function autobuild(btn, opt, recordPrice, _keeps=keeps) {
     if (!btn.model.visible) return; // can't see yet
     if (btn.model.resourceIsLimited) return; // don't have enough cap yet
     if (!btn.model.enabled) {
+      if (recordPrice && btn.model.prices) {
+        try {
+        for (let {name, val} of btn.model.prices) {
+          btnPrices[name] = Math.max(btnPrices[name] || 0, val);
+        }
+        }catch(e) {
+          console.error(e, btn.model.prices, btn);
+        }
+      }
       return; // can't build yet
     }
 
@@ -485,11 +530,35 @@ box-shadow: 2px 2px 5px;
     if (auto.praise && r.faith.value > r.faith.maxValue * 0.99)
       game.religion.praise();
 
-    // opt = {
-    //   max: maximum to craft
-    //   atatime: how many to craft at once, default: 1
-    // }
+    btnPrices = {};
     
+    if (auto.science) {
+      for (let k in buttons) {
+        if (k.slice(0, 8) == "Science_")
+          autobuild(buttons[k], {}, true, {});
+      }
+    }
+
+    if (auto.workshop) {
+      for (let k in buttons) {
+        if (k.slice(0, 9) == "Workshop_")
+          autobuild(buttons[k], {}, true, {});
+      }
+    }
+    
+    if (auto.religion) {
+      for (let k in buttons) {
+        if (k.slice(0, 9) == "Religion_") {
+          let name = k.slice(9);
+          if (name == "?" || name == "Praise" || name.slice(0, 9) == "Transcend")
+            continue;
+          autobuild(buttons[k], {}, true, {});
+        }
+      }
+    }
+    
+    
+    let keepsAndPrices = Object.assign({}, keeps, btnPrices);
 
     if (auto.craft) {
       for (let k in autocraftSettings) {
@@ -508,34 +577,10 @@ box-shadow: 2px 2px 5px;
           //console.error("No such button: ", k);
           continue;
         }
-        autobuild(buttons[k], autobuildSettings[k]);
+        autobuild(buttons[k], autobuildSettings[k], false, keepsAndPrices);
       }
     }
     
-    if (auto.science) {
-      for (let k in buttons) {
-        if (k.slice(0, 8) == "Science_")
-          autobuild(buttons[k], {}, {});
-      }
-    }
-
-    if (auto.workshop) {
-      for (let k in buttons) {
-        if (k.slice(0, 9) == "Workshop_")
-          autobuild(buttons[k], {}, {});
-      }
-    }
-    
-    if (auto.religion) {
-      for (let k in buttons) {
-        if (k.slice(0, 9) == "Religion_") {
-          let name = k.slice(9);
-          if (name == "?" || name == "Praise" || name.slice(0, 9) == "Transcend")
-            continue;
-          autobuild(buttons[k], {}, {});
-        }
-      }
-    }
     
     if (auto.village) {
       vis.jobsWant = {};
@@ -622,6 +667,8 @@ box-shadow: 2px 2px 5px;
       //game.village.maxKittens
       //game.village.sim.kittens
     }
+    
+    vis.btnPrices = btnPrices;
   }
 
 }())
