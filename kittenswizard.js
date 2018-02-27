@@ -205,7 +205,7 @@
 //     Unicorns_unicornTomb: {},
     
 //     Trade_dragons: {when: {gold: 1000, titanium: 6000, uranium_lt: 500}},
-    Trade_zebras: {when: {gold: 100, titanium_lt: 3300}},
+    Trade_zebras: {when: {gold: 5000, titanium_lt: 3300}},
   };
 
   // Science, Workshop and Religion ignore this
@@ -243,7 +243,7 @@
     parchment: {max: 10000, quiet: true},
     manuscript: {max: 2000, when: {parchment: 600}, quiet: true},
     compedium: {max: 4000, when: {manuscript: 500}}, // SIC
-    blueprint: {max: 25, when: {compedium: 200}, debug: true},
+    blueprint: {max: 25, when: {compedium: 200}},
   };
   
   
@@ -361,7 +361,7 @@
   }
 
   
-  function matchWhen(when, prices={}, _keeps=keeps) {
+  function matchWhen(when, prices={}, _keeps=keeps, dbg=false) {
     for (let name in when) {
       let val = when[name];
 
@@ -377,11 +377,15 @@
       let keep = _keeps[name] || 0;
 
       if (lt) {
-        if (have > val || have < keep + price)
+        if (have > val) {
+          debug(dbg, "matchWhen", name, have, val, price, keep);
           return false;
+        }
       } else {
-        if (have < Math.max(val, keep) + price)
+        if (have < Math.max(val, keep) + price) {
+          debug(dbg, "matchWhen", name, have, val, price, keep);
           return false;
+        }
       }
     }
     for (let keepRes in _keeps) {
@@ -473,21 +477,21 @@
     if (btn.model.resourceIsLimited) return; // don't have enough cap yet
     if (!btn.model.enabled) {
       if (recordPrice && btn.model.prices) {
-        try {
         for (let {name, val} of btn.model.prices) {
           btnPrices[name] = Math.max(btnPrices[name] || 0, val);
-        }
-        }catch(e) {
-          console.error(e, btn.model.prices, btn);
         }
       }
       return; // can't build yet
     }
+    
+    let name = "";
+    if (btn.tab) name = btn.tab.tabName;
+    else name = btn;
 
     if (!opt.when) opt.when = {};
 
-    if (!matchWhen(opt.when, pairsToObj(btn.model.prices), _keeps))
-      return;
+    if (!matchWhen(opt.when, pairsToObj(btn.model.prices), _keeps, opt.debug))
+      return; // debug(opt.debug, name, "when", btn.model.prices, _keeps);
     if (opt.max && btn.model.metaAccessor.meta.val >= opt.max)
       return;
 
@@ -495,10 +499,6 @@
     if (btn.model && btn.model.metaAccessor)
       before = btn.model.metaAccessor.meta.val;
     btn.domNode.click();
-
-    let name = "";
-    if (btn.tab) name = btn.tab.tabName;
-    else name = btn;
 
     if (btn.race)
       console.log("autotrade", btn.race.name);
