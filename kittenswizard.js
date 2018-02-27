@@ -155,10 +155,10 @@
     //removeFromJobs: false, // TODO: not yet used
     jobs: {
       farmer: {min: 3, ratio: 8},
-      woodcutter: {ratio: 38},
-      miner: {ratio: 23},
-      scholar: {ratio: 12},
-      hunter: {ratio: 10},
+      woodcutter: {ratio: 35},
+      miner: {ratio: 20},
+      scholar: {ratio: 15},
+      hunter: {ratio: 13},
       priest: {ratio: 3},
       geologist: {ratio: 6},
     },
@@ -200,9 +200,9 @@
 //     Space_duneMission: {},
 //     Space_moonOutpost: {},
     
-//     "Religion_Sacrifice Unicorns": {},
-//     Religion_ivoryTower: {},
-//     Religion_unicornTomb: {},
+//     "ReligionBtn_Sacrifice Unicorns": {},
+//     Unicorns_ivoryTower: {},
+//     Unicorns_unicornTomb: {},
     
 //     Trade_dragons: {when: {gold: 1000, titanium: 6000, uranium_lt: 500}},
     Trade_zebras: {when: {gold: 100, titanium_lt: 3300}},
@@ -298,7 +298,7 @@
   function loadButtons() {
     buttons = {};
     window.buttons = buttons;
-    function handleButton(t, b, name=undefined) {
+    function handleButton(t, b, name=undefined, tabName=undefined) {
       if (!b) return;
       
       if (!name) {
@@ -315,18 +315,20 @@
       if (!name) name = "?";
       if (name.slice(0, 14) == "Praise the sun")
         name = "Praise";
-      buttons[t.tabId + "_" + name] = b;
+      if (!tabName)
+        tabName = t.tabId;
+      buttons[tabName + "_" + name] = b;
     }
     game.tabs.forEach(t => {
       updateTab(t);
       t.buttons.forEach(b => handleButton(t, b));
     });
     updateTab(game.religionTab);
+    game.religionTab.rUpgradeButtons.forEach(b => handleButton(game.religionTab, b));
+    game.religionTab.zgUpgradeButtons.forEach(b => handleButton(game.religionTab, b, undefined, "Unicorns"));
     for (let k in game.religionTab) {
       if (k.slice(-3) == "Btn")
-        handleButton(game.religionTab, game.religionTab[k]);
-      else if (k.slice(-7) == "Buttons")
-        game.religionTab[k].forEach(b => handleButton(game.religionTab, b));
+        handleButton(game.religionTab, game.religionTab[k], undefined, "ReligionBtn");
     }
     updateTab(game.diplomacyTab);
     game.diplomacyTab.racePanels.forEach(r => {
