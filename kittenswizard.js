@@ -155,47 +155,58 @@
     //removeFromJobs: false, // TODO: not yet used
     jobs: {
       farmer: {min: 3, ratio: 8},
-      woodcutter: {ratio: 35},
-      miner: {ratio: 20},
+      woodcutter: {ratio: 15},
+      miner: {ratio: 25},
       scholar: {ratio: 15},
-      hunter: {ratio: 13},
+      hunter: {ratio: 18},
       priest: {ratio: 3},
-      geologist: {ratio: 6},
+      geologist: {ratio: 16},
     },
   };
   
   const totalRatio = Object.values(village.jobs).map(j => j.ratio).reduce((a, b) => a + b, 0);
   vis.jobsTotalRatio = totalRatio;
   
+  // priceMult slows things down, so they can only be bought if there is a multiple of their price available
   const autobuildSettings = {
+    // Catnip
     Bonfire_field: {},
 //     Bonfire_aqueduct: {},
 //     Bonfire_pasture: {},
     
+    // Housing
     Bonfire_hut: {},
     Bonfire_logHouse: {},
-//     Bonfire_mansion: {},
+    Bonfire_mansion: {priceMult: 3},
     
+    // Storage
     Bonfire_barn: {},
     Bonfire_warehouse: {},
     Bonfire_harbor: {},
     
+    // Science
     Bonfire_library: {},
     Bonfire_academy: {},
     Bonfire_observatory: {},
+    Bonfire_bioLab: {priceMult: 3},
+    
     Bonfire_mine: {},
     Bonfire_smelter: {},
     Bonfire_lumberMill: {},
+    Bonfire_quarry: {max: 10},
+    Bonfire_calciner: {max: 15},
+    Bonfire_oilWell: {max: 15},
+    
+    // Bonuses
     Bonfire_workshop: {},
     Bonfire_amphitheatre: {},
+    Bonfire_tradepost: {},
+    
+    // Religion
     Bonfire_temple: {},
     Bonfire_chapel: {},
-    Bonfire_tradepost: {},
-    Bonfire_quarry: {max: 5},
-    Bonfire_calciner: {max: 5},
-//     Bonfire_oilWell: {max: 36},
-    
     Bonfire_unicornPasture: {},
+//     Bonfire_ziggurat: {},
     
 //     Space_duneMission: {},
 //     Space_moonOutpost: {},
@@ -205,7 +216,7 @@
 //     Unicorns_unicornTomb: {},
     
 //     Trade_dragons: {when: {gold: 1000, titanium: 6000, uranium_lt: 500}},
-    Trade_zebras: {when: {gold: 5000, titanium_lt: 3300}},
+    Trade_zebras: {when: {gold: 500, get titanium_lt() {return r.titanium.maxValue - 100}}},
   };
 
   // Science, Workshop and Religion ignore this
@@ -230,19 +241,19 @@
 
     slab: {quiet: true},
 
-    steel: {when: {coal: 1000, iron: 10000}, quiet: true},
-    gear: {max: 45, when: {steel: 100}},
+    steel: {when: {coal: 1000, iron: 10000}, quiet: true, debug: false},
+    gear: {max: 100, when: {steel: 100}},
     alloy: {max: 20}, // titanium won't max out for a while
     concrate: {max: 180},
     plate: {quiet: true},
     
     ship: {when: {scaffold: 5000, plate: 600}},
     
-    kerosene: {},
+    kerosene: {max: 10},
 
     parchment: {max: 10000, quiet: true},
-    manuscript: {max: 2000, when: {parchment: 600}, quiet: true},
-    compedium: {max: 4000, when: {manuscript: 500}}, // SIC
+    manuscript: {max: 500, when: {parchment: 400}, quiet: true},
+    compedium: {max: 500, when: {manuscript: 400}}, // SIC
     blueprint: {max: 25, when: {compedium: 200}},
   };
   
@@ -252,6 +263,7 @@
   }
   
   const r = game.resPool.resourceMap;
+  window.r = r;
 
   var craftCache = {};
 
@@ -361,7 +373,7 @@
   }
 
   
-  function matchWhen(when, prices={}, _keeps=keeps, dbg=false) {
+  function matchWhen({when, prices={}, keeps, dbg=false, priceMult=1}) {
     for (let name in when) {
       let val = when[name];
 
@@ -373,8 +385,8 @@
 
       if (!r[name]) console.error('bad when:', name);
       let have = r[name].value;
-      let price = prices[name] || 0;
-      let keep = _keeps[name] || 0;
+      let price = (prices[name] || 0) * priceMult;
+      let keep = keeps[name] || 0;
 
       if (lt) {
         if (have > val) {
@@ -388,32 +400,33 @@
         }
       }
     }
-    for (let keepRes in _keeps) {
+    for (let keepRes in keeps) {
       let price = prices[keepRes];
       if (price == null) continue;
       if (r[keepRes] == null) console.error('matchWhen keeps? ', keepRes);
       let have = r[keepRes].value;
-      let keep = _keeps[keepRes];
-      if (have < keep + price)
+      let keep = keeps[keepRes];
+      if (have < keep + price * priceMult)
         return false;
     }
     return true;
   }
 
-  function autocraft(res, opt) {
-    let max = opt.max? Math.max(opt.max, btnPrices[res.name] || 0) : null;
-    if (max && r[res.name].value >= max) return debug(opt.debug, res.name, ">=max", max, btnPrices[res.name]);
+  function autocraft(res, opt, keeps) {
+    let max = opt.max? Math.max(opt.max, keeps[res.name] || 0) : null;
+    if (max && r[res.name].value >= max) return debug(opt.debug, res.name, ">=max", max, keeps[res.name]);
 
     if (!opt.when) opt.when = {};
 
     let price = game.workshop.getCraftPrice(res);
 
-    if (!matchWhen(opt.when, pairsToObj(price)))
-      return;
+    if (!matchWhen({when: opt.when, prices: pairsToObj(price), keeps, debug: opt.debug, priceMult: opt.priceMult || 1}))
+      return debug(opt.debug, res.name, 'when');;
 
     let priceHasMax = false;
     let nearMax = false;
     let canCraft = Infinity;
+    let shouldCraft = 0; // for nearMax
 
     // Cases of different behavior:
     // Some resource is near its max
@@ -425,14 +438,15 @@
       let p = r[name];
 
       if (p.value < val)
-        return; // don't have enough of this resource to craft
+        return debug(opt.debug, "not enough", name, val, 'have:', p.value); // don't have enough of this resource to craft
 
       let keep = 0;
+      let keepNearMax = 0;
       let imNearMax = false;
       if (p.maxValue) {
         priceHasMax = true;
         // Keep low enough to craft at least one, or keep up to the ratio
-        keep = Math.min(p.maxValue - val, p.maxValue * (opt.ratio || 0.995));
+        keepNearMax = Math.min(p.maxValue - val, p.maxValue * (opt.ratio || 0.995));
         // opt.when takes precedence
         keep = Math.max(opt.when[name] || 0, keep);
 
@@ -445,41 +459,76 @@
       }
       keep = Math.max(keep, keeps[name] || 0);
 
-      let multiple = 1;
-      if (imNearMax)
-        nearMax = true;
-      if (!p.maxValue || imNearMax) {
+      let multiple = 0;
+      let multipleNearMax = 0;
+      if (!p.maxValue) {
         if (p.value > keep)
           multiple = (p.value - keep) / val;
+        if (multiple < canCraft)
+          canCraft = multiple | 0;
+        if (canCraft <= 0) {
+          debug(opt.debug, "nocraft canCraft", res.name, name, p.value, multiple, imNearMax, keep, keepNearMax);
+          return;
+        }
       }
-      if (multiple < canCraft)
-        canCraft = multiple | 0;
-      if (canCraft <= 0) {
-        //debug(opt.debug, "nocraft canCraft", res.name, name, p.value, multiple, canCraft);
-        return;
+      if (imNearMax) {
+        nearMax = true;
+        if (p.value > keepNearMax)
+          multipleNearMax = (p.value - keepNearMax) / val;
+        if (multipleNearMax > shouldCraft)
+          shouldCraft = multipleNearMax | 0;
       }
     }
-
-    if (!priceHasMax || nearMax) {
-      if (opt.atatime > canCraft) return;
-
-      let howmany = opt.atatime || canCraft;
-      let ratio = 1 + gamePage.getResCraftRatio({name : res.name});
-      let oldhowmany = howmany;
-      if (max) howmany = Math.min(howmany, Math.ceil((max - r[res.name].value) / ratio));
-      if (!opt.quiet) console.log('autocrafting', res.name, howmany, "ratio:", ratio.toFixed(2), oldhowmany);
-      game.workshop.craft(res.name, Math.max(0, howmany | 0), true); // don't undo
+    
+    let howManyToCraft = 0;
+    if (!priceHasMax) howManyToCraft = canCraft;
+    else if (nearMax) howManyToCraft = shouldCraft;
+    
+    if (opt.atatime) howManyToCraft = Math.min(howManyToCraft, opt.atatime);
+    
+    if (howManyToCraft < 1){
+      return;
+    }
+    
+    let ratio = 1 + gamePage.getResCraftRatio({name : res.name});
+    let howmany = howManyToCraft;
+    if (max) howmany = Math.min(howmany, Math.ceil((max - r[res.name].value) / ratio));
+    if (!opt.quiet && !opt.debug)
+      console.log('autocrafting', res.name, howmany, "ratio:", ratio.toFixed(2), howManyToCraft, "can", canCraft, "should", shouldCraft, "max", max);
+    game.workshop.craft(res.name, Math.max(0, howmany | 0), true); // don't undo
+  }
+  
+  function recordBtnPrice(btn) {
+    const prices = btn.model.prices;
+    let missingCraftable = false;
+    for (let {name, val} of prices) {
+      if (!r[name].craftable) continue;
+      
+      btnPrices[name] = Math.max(btnPrices[name] || 0, val);
+      if (r[name].value < val)
+        missingCraftable = true;
+    }
+    // wait for craftable resources first so we don't block up
+    // the non-craftable resources the craftable ones might need
+    // like science
+    if (missingCraftable) return;
+    
+    for (let {name, val} of prices) {
+      if (r[name].craftable) continue;
+      
+      btnPrices[name] = Math.max(btnPrices[name] || 0, val);
     }
   }
 
-  function autobuild(btn, opt, recordPrice, _keeps=keeps) {
-    if (!btn.model.visible) return; // can't see yet
-    if (btn.model.resourceIsLimited) return; // don't have enough cap yet
-    if (!btn.model.enabled) {
-      if (recordPrice && btn.model.prices) {
-        for (let {name, val} of btn.model.prices) {
-          btnPrices[name] = Math.max(btnPrices[name] || 0, val);
-        }
+  function autobuild(btn, opt, recordPrice, keeps) {
+    const model = btn.model;
+    const meta = model.metadata;
+    if (!model.visible) return; // can't see yet
+    if (model.resourceIsLimited) return; // don't have enough cap yet
+    if (meta && meta.on && meta.noStackable) return; // have one, can't build more
+    if (!model.enabled) {
+      if (recordPrice && model.prices) {
+        recordBtnPrice(btn);
       }
       return; // can't build yet
     }
@@ -490,25 +539,25 @@
 
     if (!opt.when) opt.when = {};
 
-    if (!matchWhen(opt.when, pairsToObj(btn.model.prices), _keeps, opt.debug))
-      return; // debug(opt.debug, name, "when", btn.model.prices, _keeps);
-    if (opt.max && btn.model.metaAccessor.meta.val >= opt.max)
+    if (!matchWhen({when: opt.when, prices: pairsToObj(model.prices), priceMult: opt.priceMult || 1, keeps, debug: opt.debug}))
+      return; // debug(opt.debug, name, "when", btn.model.prices, keeps);
+    if (opt.max && model.metaAccessor.meta.val >= opt.max)
       return;
 
     let before = 0, after = 0;
-    if (btn.model && btn.model.metaAccessor)
+    if (btn.model && model.metaAccessor)
       before = btn.model.metaAccessor.meta.val;
     btn.domNode.click();
 
     if (btn.race)
       console.log("autotrade", btn.race.name);
-    else if (btn.model.metadata && btn.model.metaAccessor) {
-      if (before != btn.model.metaAccessor.meta.val)
-        console.log("autobuild", btn.model.metadata.name, before, '->', btn.model.metaAccessor.meta.val, name);
-    } else if (btn.model.metadata)
-      console.log("autobuild", btn.model.metadata.name, name);
+    else if (model.metadata && model.metaAccessor) {
+      if (before != model.metaAccessor.meta.val)
+        console.log("autobuild", meta.name, before, '->', model.metaAccessor.meta.val, name);
+    } else if (model.metadata)
+      console.log("autobuild", meta.name, name);
     else
-      console.log("autoclick", btn.model.name, name);
+      console.log("autoclick", model.name, name);
     btn.update();
   }
 
@@ -560,7 +609,10 @@
     }
     
     
+    //btnPrices.science = 120000;
+    
     let keepsAndPrices = Object.assign({}, keeps, btnPrices);
+    
 
     if (auto.craft) {
       for (let k in autocraftSettings) {
@@ -569,7 +621,7 @@
           console.error("No such craft: ", k);
           continue;
         }
-        autocraft(c, autocraftSettings[k]);
+        autocraft(c, autocraftSettings[k], keepsAndPrices);
       }
     }
     
