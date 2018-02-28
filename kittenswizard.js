@@ -193,9 +193,9 @@
     Bonfire_mine: {},
     Bonfire_smelter: {},
     Bonfire_lumberMill: {},
-    Bonfire_quarry: {max: 10},
-    Bonfire_calciner: {max: 15},
-    Bonfire_oilWell: {max: 15},
+    Bonfire_quarry: {priceMult: 2},
+    Bonfire_calciner: {priceMult: 2},
+    Bonfire_oilWell: {priceMult: 2},
     
     // Bonuses
     Bonfire_workshop: {},
@@ -211,9 +211,9 @@
 //     Space_duneMission: {},
 //     Space_moonOutpost: {},
     
-//     "ReligionBtn_Sacrifice Unicorns": {},
+    "ReligionBtn_Sacrifice Unicorns": {},
+    Unicorns_unicornTomb: {},
 //     Unicorns_ivoryTower: {},
-//     Unicorns_unicornTomb: {},
     
 //     Trade_dragons: {when: {gold: 1000, titanium: 6000, uranium_lt: 500}},
     Trade_zebras: {when: {gold: 500, get titanium_lt() {return r.titanium.maxValue - 100}}},
