@@ -189,6 +189,8 @@
   // Use these as goals
   const goalbuild = [
     {name: "Space!", btns: {Space_orbitalLaunch: {}}},
+    {name: "Satellite", btns: {Space_sattelite: {max: 1}}},
+    {name: "Moon", btns: {Space_moonMission: {}}},
   ];
   
   // priceMult slows things down, so they can only be bought if there is a multiple of their price available
@@ -276,7 +278,7 @@
     kerosene: {max: 10},
 
     parchment: {max: 10000, quiet: true},
-    manuscript: {max: 500, when: {parchment: 400}, quiet: true},
+    manuscript: {max: 50000, when: {parchment: 400}, quiet: true},
     compedium: {max: 500, when: {manuscript: 400}, quiet: true}, // SIC
     blueprint: {max: 25, when: {compedium: 200}},
   };
@@ -432,8 +434,10 @@
       if (r[keepRes] == null) console.error('matchWhen keeps? ', keepRes);
       let have = r[keepRes].value;
       let keep = keeps[keepRes];
-      if (have < keep + price * priceMult)
+      if (have < keep + price * priceMult) {
+        debug(dbg, "matchWhen", keepRes, have, price, keep);
         return false;
+      }
     }
     return true;
   }
@@ -446,7 +450,7 @@
 
     let price = game.workshop.getCraftPrice(res);
 
-    if (!matchWhen({when: opt.when, prices: pairsToObj(price), keeps, debug: opt.debug, priceMult: opt.priceMult || 1}))
+    if (!matchWhen({when: opt.when, prices: pairsToObj(price), keeps, dbg: opt.debug, priceMult: opt.priceMult || 1}))
       return debug(opt.debug, res.name, 'when');;
 
     let priceHasMax = false;
@@ -683,10 +687,10 @@
     }
     
     // hack to allow compendium and blueprint to still be crafted
-    if (btnPrices.copendium && btnPrices.science)
-      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 10000 - 1000);
-    if (btnPrices.blueprint && btnPrices.science)
-      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 25000 - 1000);
+    //if (btnPrices.copendium && btnPrices.science)
+    //  btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 10000 - 1000);
+    //if (btnPrices.blueprint && btnPrices.science)
+      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 25000 - 100);
     
     let keepsAndPrices = Object.assign({}, keeps, btnPrices);
     
