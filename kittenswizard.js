@@ -6,6 +6,8 @@
     jobsNext: "",
     jobsWant: {},
     btnPrices: {},
+    currGoal: null,
+    currGoalList: [],
   };
   
   let jobsMap = {};
@@ -39,6 +41,12 @@
       el: vueEl,
       template: `
 <div id="vueAppEl">
+  <div id="goal">
+    goal: {{currGoal ? currGoal.name : JSON.stringify(currGoal)}}
+    <table>
+      <tr v-for="{phase, name} in currGoalList" :class="{want: true}" ><td>{{name}}: </td><td>{{dispPhase(phase)}}</td></tr>
+    </table>
+  </div>
   <div id="jobs">
     jobs (total {{jobsTotalRatio}}):
     <table>
@@ -71,7 +79,17 @@
           if (val - (val | 0))
             val = val.toFixed(1);
           return val + (u? units[u] : '');
-        }
+        },
+        dispPhase(phase) {
+          return [
+            "hidden",
+            "max too low",
+            "res too low",
+            "ready",
+            "Built!",
+            "Done!",
+          ][phase];
+        },
       },
     });
   }
@@ -145,6 +163,7 @@
     
     science: true,
     workshop: true,
+    goalbuild: true,
   }
   
   const village = {
@@ -166,6 +185,11 @@
   
   const totalRatio = Object.values(village.jobs).map(j => j.ratio).reduce((a, b) => a + b, 0);
   vis.jobsTotalRatio = totalRatio;
+  
+  // Use these as goals
+  const goalbuild = [
+    {name: "Space!", btns: {Space_orbitalLaunch: {}}},
+  ];
   
   // priceMult slows things down, so they can only be bought if there is a multiple of their price available
   const autobuildSettings = {
@@ -204,7 +228,7 @@
     
     // Religion
     Bonfire_temple: {},
-    Bonfire_chapel: {},
+    Bonfire_chapel: {priceMult: 1.5},
     Bonfire_unicornPasture: {},
 //     Bonfire_ziggurat: {},
     
@@ -213,10 +237,10 @@
     
     "ReligionBtn_Sacrifice Unicorns": {},
     Unicorns_unicornTomb: {},
-//     Unicorns_ivoryTower: {},
+    Unicorns_ivoryTower: {},
     
-//     Trade_dragons: {when: {gold: 1000, titanium: 6000, uranium_lt: 500}},
-    Trade_zebras: {when: {gold: 500, get titanium_lt() {return r.titanium.maxValue - 100}}},
+    Trade_dragons: {when: {gold: 500, titanium: 6000, get uranium_lt() {return r.uranium.maxValue - 100}}},
+    Trade_zebras: {when: {gold: 500, get titanium_lt() {return r.titanium.maxValue - 100}}, quiet: true},
   };
 
   // Science, Workshop and Religion ignore this
@@ -244,7 +268,7 @@
     steel: {when: {coal: 1000, iron: 10000}, quiet: true, debug: false},
     gear: {max: 100, when: {steel: 100}},
     alloy: {max: 20}, // titanium won't max out for a while
-    concrate: {max: 180},
+    concrate: {max: 50},
     plate: {quiet: true},
     
     ship: {when: {scaffold: 5000, plate: 600}},
@@ -253,7 +277,7 @@
 
     parchment: {max: 10000, quiet: true},
     manuscript: {max: 500, when: {parchment: 400}, quiet: true},
-    compedium: {max: 500, when: {manuscript: 400}}, // SIC
+    compedium: {max: 500, when: {manuscript: 400}, quiet: true}, // SIC
     blueprint: {max: 25, when: {compedium: 200}},
   };
   
@@ -319,14 +343,16 @@
             name = b.model.job.name;
           } else if (b.model.metadata) {
             name = b.model.metadata.name;
+          } else if (b.opts) {
+            name = b.opts.name;
           } else {
             name = b.model.name;
           }
         }
       }
       if (!name) name = "?";
-      if (name.slice(0, 14) == "Praise the sun")
-        name = "Praise";
+      //if (name.slice(0, 14) == "Praise the sun")
+      //  name = "Praise";
       if (!tabName)
         tabName = t.tabId;
       buttons[tabName + "_" + name] = b;
@@ -520,17 +546,30 @@
     }
   }
 
+  // returns phase:
+  // 0 -> not available
+  // 1 -> available, but not enough max
+  // 2 -> available, but not enough resources
+  // 3 -> available for build
+  // 4 -> built one
+  // 5 -> max limit hit, no more requested
+  const PHASE_NOT_AVAIL = 0;
+  const PHASE_NO_MAX = 1;
+  const PHASE_NO_RES = 2;
+  const PHASE_AVAIL = 3;
+  const PHASE_BUILT = 4;
+  const PHASE_AT_MAX = 5;
   function autobuild(btn, opt, recordPrice, keeps) {
     const model = btn.model;
     const meta = model.metadata;
-    if (!model.visible) return; // can't see yet
-    if (model.resourceIsLimited) return; // don't have enough cap yet
-    if (meta && meta.on && meta.noStackable) return; // have one, can't build more
+    if (!model.visible) return PHASE_NOT_AVAIL; // can't see yet
+    if (model.resourceIsLimited) return PHASE_NO_MAX; // don't have enough cap yet
+    if (meta && (meta.researched || (meta.on && meta.noStackable))) return PHASE_AT_MAX; // have one, can't build more
     if (!model.enabled) {
       if (recordPrice && model.prices) {
         recordBtnPrice(btn);
       }
-      return; // can't build yet
+      return PHASE_NO_RES; // can't build yet
     }
     
     let name = "";
@@ -540,25 +579,29 @@
     if (!opt.when) opt.when = {};
 
     if (!matchWhen({when: opt.when, prices: pairsToObj(model.prices), priceMult: opt.priceMult || 1, keeps, debug: opt.debug}))
-      return; // debug(opt.debug, name, "when", btn.model.prices, keeps);
+      return PHASE_NO_RES; // debug(opt.debug, name, "when", btn.model.prices, keeps);
     if (opt.max && model.metaAccessor.meta.val >= opt.max)
-      return;
+      return PHASE_AT_MAX;
 
     let before = 0, after = 0;
     if (btn.model && model.metaAccessor)
       before = btn.model.metaAccessor.meta.val;
     btn.domNode.click();
 
-    if (btn.race)
-      console.log("autotrade", btn.race.name);
-    else if (model.metadata && model.metaAccessor) {
-      if (before != model.metaAccessor.meta.val)
-        console.log("autobuild", meta.name, before, '->', model.metaAccessor.meta.val, name);
-    } else if (model.metadata)
-      console.log("autobuild", meta.name, name);
-    else
-      console.log("autoclick", model.name, name);
+    if (!opt.quiet) {
+      if (btn.race)
+        console.log("autotrade", btn.race.name);
+      else if (model.metadata && model.metaAccessor) {
+        if (before != model.metaAccessor.meta.val)
+          console.log("autobuild", meta.name, before, '->', model.metaAccessor.meta.val, name);
+      } else if (model.metadata)
+        console.log("autobuild", meta.name, name);
+      else
+        console.log("autoclick", model.name, name);
+    }
     btn.update();
+    
+    return PHASE_BUILT;
   }
 
   
@@ -583,6 +626,40 @@
 
     btnPrices = {};
     
+    
+    if (auto.goalbuild) {
+      vis.currGoal = 'done';
+      vis.currGoalList = [];
+      for (let goal of goalbuild) {
+        let stopHere = false;
+        
+        if (goal.btns) for (let k in goal.btns) {
+          if (!(k in buttons)) {
+            stopHere = true;
+            vis.currGoalList.push({
+              name: k,
+              phase: 0,
+            })
+            continue;
+          }
+          let phase = autobuild(buttons[k], goal.btns[k], true, {});
+          if (phase != PHASE_AT_MAX) {
+            stopHere = true;
+            vis.currGoalList.push({
+              name: k,
+              phase,
+            })
+          }
+        }
+        
+        if (stopHere) {
+          vis.currGoal = goal;
+          break;
+        }
+      }
+    }
+    
+    
     if (auto.science) {
       for (let k in buttons) {
         if (k.slice(0, 8) == "Science_")
@@ -600,16 +677,16 @@
     if (auto.religion) {
       for (let k in buttons) {
         if (k.slice(0, 9) == "Religion_") {
-          let name = k.slice(9);
-          if (name == "?" || name == "Praise" || name.slice(0, 9) == "Transcend")
-            continue;
           autobuild(buttons[k], {}, true, {});
         }
       }
     }
     
-    
-    //btnPrices.science = 120000;
+    // hack to allow compendium and blueprint to still be crafted
+    if (btnPrices.copendium && btnPrices.science)
+      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 10000 - 1000);
+    if (btnPrices.blueprint && btnPrices.science)
+      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 25000 - 1000);
     
     let keepsAndPrices = Object.assign({}, keeps, btnPrices);
     
