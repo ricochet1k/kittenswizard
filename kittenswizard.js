@@ -8,6 +8,7 @@
     btnPrices: {},
     currGoal: null,
     currGoalList: [],
+    debug: [],
   };
   
   let jobsMap = {};
@@ -58,6 +59,10 @@
     <table>
       <tr v-for="price, name in btnPrices" :class="{want: price > have(name)}" ><td>{{name}}: </td><td>{{display(price)}} / {{display(have(name))}}</td></tr>
     </table>
+  </div>
+<div id="debug">
+  <pre v-for="line, i in debug" :key='i'>{{line}}</pre>
+</div>
 </div>
       `,
       data() {
@@ -126,7 +131,9 @@
       document.getElementsByTagName('head')[0].appendChild(style);
   }
   
-  vueStyleTag.innerText = `
+  if (window.vueStyleTag) {
+    
+    vueStyleTag.innerText = `
 #vueAppEl {
   border-radius: 10px;
   box-shadow: 2px 2px 5px;
@@ -145,7 +152,18 @@
 #vueAppEl table td {
   padding: 0 3px;
 }
+#vueAppEl #debug {
+  position: absolute;
+  background-color: white;
+  left: -500px;
+  bottom: -40px;
+}
+#vueAppEl #debug pre {
+  margin: 0;
+}
 `;
+  
+  }
   
   
 
@@ -173,13 +191,13 @@
     autojobs: true,
     //removeFromJobs: false, // TODO: not yet used
     jobs: {
-      farmer: {min: 3, ratio: 8},
-      woodcutter: {ratio: 15},
-      miner: {ratio: 25},
-      scholar: {ratio: 15},
-      hunter: {ratio: 18},
-      priest: {ratio: 3},
-      geologist: {ratio: 16},
+      farmer: {min: 3, ratio: 15}, // need a minimum to produce enough food during cold winter -90%
+      woodcutter: {ratio: 20}, // needed when wood/beam/scaffold is low and needed
+      miner: {ratio: 17}, // needed when minerals/slab are needed. Production must be positive, and slab is needed for zebras
+      scholar: {ratio: 13}, // only needed if science is low or science is being used (compendiums/blueprints)
+      hunter: {min: 1, ratio: 15}, // always needed, needed more when things need parchment/manuscript/compendium/blueprint (generally when manuscript is low, if manuscript is high then science can't keep up)
+      priest: {ratio: 8},
+      geologist: {ratio: 12}, // needed when coal prod < half of iron prod
     },
   };
   
@@ -188,9 +206,16 @@
   
   // Use these as goals
   const goalbuild = [
+    {name: "Mine", btns: {Bonfire_mine: {max: 1}}},
+    {name: "Smelter", btns: {Bonfire_smelter: {max: 1}}},
+    {name: "Workshop", btns: {Bonfire_workshop: {max: 1}}},
+    {name: "Coal!", btns: {Workshop_deepMining: {}, Workshop_coalFurnace: {}}},
     {name: "Space!", btns: {Space_orbitalLaunch: {}}},
     {name: "Satellite", btns: {Space_sattelite: {max: 1}}},
-    {name: "Moon", btns: {Space_moonMission: {}}},
+    {name: "Moon", btns: {Space_moonMission: {}, Bonfire_oilWell: {max: 28}}},
+    {name: "Lunar Outpost", btns: {Space_moonOutpost: {max: 1}, Bonfire_oilWell: {max: 34}}},
+    {name: "Dune", btns: {Space_duneMission: {}}},
+    {name: "Piscine", btns: {Space_piscineMission: {}}},
   ];
   
   // priceMult slows things down, so they can only be bought if there is a multiple of their price available
@@ -213,15 +238,20 @@
     // Science
     Bonfire_library: {},
     Bonfire_academy: {},
-    Bonfire_observatory: {},
+    Bonfire_observatory: {priceMult: 2},
     Bonfire_bioLab: {priceMult: 3},
     
-    Bonfire_mine: {},
+    Bonfire_mine: {priceMult: 1.5},
     Bonfire_smelter: {},
-    Bonfire_lumberMill: {},
+    Bonfire_lumberMill: {priceMult: 1.5},
+    Bonfire_steamworks: {max: 15, priceMult: 3},
+    Bonfire_magneto: {max: 15, priceMult: 3},
     Bonfire_quarry: {priceMult: 2},
-    Bonfire_calciner: {priceMult: 2},
+    Bonfire_calciner: {priceMult: 2, dry: true},
     Bonfire_oilWell: {priceMult: 2},
+    Bonfire_accelerator: {max: 2},
+    Bonfire_reactor: {max: 1},
+    Bonfire_factory: {max: 1},
     
     // Bonuses
     Bonfire_workshop: {},
@@ -241,13 +271,14 @@
     Unicorns_unicornTomb: {},
     Unicorns_ivoryTower: {},
     
-    Trade_dragons: {when: {gold: 500, titanium: 6000, get uranium_lt() {return r.uranium.maxValue - 100}}},
-    Trade_zebras: {when: {gold: 500, get titanium_lt() {return r.titanium.maxValue - 100}}, quiet: true},
+    Trade_dragons: {when: {get gold(){return r.gold.maxValue / 2}, get titanium() {return r.titanium.maxValue - 100}, get uranium_lt() {return r.uranium.maxValue - 2}}, quiet: true},
+    Trade_zebras: {when: {get gold(){return r.gold.maxValue / 2}, get titanium_lt() {return r.titanium.maxValue - 100}}, quiet: true},
   };
 
   // Science, Workshop and Religion ignore this
   const keeps = {
-    catnip: 15000,
+    catnip: 1000,
+    ship: 2000,
     //beam: 200,
     //gold: 5000,
 //     parchment: 0, //500,
@@ -256,8 +287,6 @@
     //compedium: 1000,
      //science: 85000,
   };
-  
-  let btnPrices = {};
 
   // {max: 500, when: {res: 200}, atatime: 1, ratio: 0.99, debug: true}
   const autocraftSettings = {
@@ -267,25 +296,28 @@
 
     slab: {quiet: true},
 
-    steel: {when: {coal: 1000, iron: 10000}, quiet: true, debug: false},
-    gear: {max: 100, when: {steel: 100}},
-    alloy: {max: 20}, // titanium won't max out for a while
-    concrate: {max: 50},
-    plate: {quiet: true},
+    steel: {when: {}, quiet: true, debug: true},
+    gear: {max: 1, when: {steel: 1}},
+    alloy: {max: 2}, // titanium won't max out for a while
+    concrate: {max: 10},
+    plate: {quiet: true, debug: true},
     
     ship: {when: {scaffold: 5000, plate: 600}},
     
-    kerosene: {max: 10},
+    kerosene: {},
 
     parchment: {max: 10000, quiet: true},
-    manuscript: {max: 50000, when: {parchment: 400}, quiet: true},
-    compedium: {max: 500, when: {manuscript: 400}, quiet: true}, // SIC
-    blueprint: {max: 25, when: {compedium: 200}},
+    manuscript: {max: 50000, quiet: true, debug: true},
+    compedium: {get max(){return (r.blueprint.unlocked && r.blueprint.value < 300)? r.blueprint.value * 8 + 25 : 100000}, quiet: false, debug: true}, // SIC
+    blueprint: {max: 300, when: {get compedium(){return r.blueprint.value * 8}}, quiet: true},
   };
   
   
   function debug(dbg, ...msg) {
-    if (dbg) console.log(...msg);
+    if (dbg) {
+      //console.log(...msg);
+      vis.debug.push(msg.join(' '));
+    }
   }
   
   const r = game.resPool.resourceMap;
@@ -401,29 +433,29 @@
   }
 
   
-  function matchWhen({when, prices={}, keeps, dbg=false, priceMult=1}) {
-    for (let name in when) {
-      let val = when[name];
+  function matchWhen({when, prices={}, keeps, dbg=false, priceMult=1, name}) {
+    for (let wname in when) {
+      let val = when[wname];
 
       let lt = false;
-      if (name.slice(-3) == "_lt") {
+      if (wname.slice(-3) == "_lt") {
         lt = true;
-        name = name.slice(0, -3);
+        wname = wname.slice(0, -3);
       }
 
-      if (!r[name]) console.error('bad when:', name);
-      let have = r[name].value;
-      let price = (prices[name] || 0) * priceMult;
-      let keep = keeps[name] || 0;
+      if (!r[wname]) console.error('bad when:', wname);
+      let have = r[wname].value;
+      let price = (prices[wname] || 0) * priceMult;
+      let keep = keeps[wname] || 0;
 
       if (lt) {
         if (have > val) {
-          debug(dbg, "matchWhen", name, have, val, price, keep);
+          debug(dbg, "matchWhen", name, wname, have, val, price, keep);
           return false;
         }
       } else {
         if (have < Math.max(val, keep) + price) {
-          debug(dbg, "matchWhen", name, have, val, price, keep);
+          debug(dbg, "matchWhen", name, wname, have, val, price, keep);
           return false;
         }
       }
@@ -435,28 +467,37 @@
       let have = r[keepRes].value;
       let keep = keeps[keepRes];
       if (have < keep + price * priceMult) {
-        debug(dbg, "matchWhen", keepRes, have, price, keep);
+        debug(dbg, "matchWhen", name, keepRes, have, price, keep);
         return false;
       }
     }
+    /*if (prices.oil && name != "kerosene")
+      debug(true, "matchWhen oil", name, r.oil.value, when.oil, prices.oil, keeps.oil, keeps);
+    if (prices.alloy)
+      debug(true, "matchWhen alloy", name, r.alloy.value, when.alloy, prices.alloy, keeps.alloy, keeps);
+      */
     return true;
   }
 
   function autocraft(res, opt, keeps) {
+    //if (res.name == 'plate') console.log('== autocraft', res, opt, keeps);
     let max = opt.max? Math.max(opt.max, keeps[res.name] || 0) : null;
     if (max && r[res.name].value >= max) return debug(opt.debug, res.name, ">=max", max, keeps[res.name]);
 
     if (!opt.when) opt.when = {};
 
+    let ratio = 1 + gamePage.getResCraftRatio({name : res.name});
     let price = game.workshop.getCraftPrice(res);
 
-    if (!matchWhen({when: opt.when, prices: pairsToObj(price), keeps, dbg: opt.debug, priceMult: opt.priceMult || 1}))
-      return debug(opt.debug, res.name, 'when');;
+    if (!matchWhen({name: res.name, when: opt.when, prices: pairsToObj(price), keeps, dbg: opt.debug, priceMult: opt.priceMult || 1}))
+      return debug(opt.debug, res.name, 'when');
 
     let priceHasMax = false;
     let nearMax = false;
     let canCraft = Infinity;
     let shouldCraft = 0; // for nearMax
+    
+    let wantThisRes = keeps[res.name] && r[res.name].value < keeps[res.name];
 
     // Cases of different behavior:
     // Some resource is near its max
@@ -468,15 +509,19 @@
       let p = r[name];
 
       if (p.value < val)
-        return debug(opt.debug, "not enough", name, val, 'have:', p.value); // don't have enough of this resource to craft
+        return debug(opt.debug, res.name, "not enough", name, val, 'have:', p.value); // don't have enough of this resource to craft
 
       let keep = 0;
       let keepNearMax = 0;
       let imNearMax = false;
       if (p.maxValue) {
         priceHasMax = true;
+        
+        // if the res we are crafting is needed, use a lower ratio to craft faster
+        let ratio = opt.ratio || (wantThisRes? 0.1 : 0.995);
+        
         // Keep low enough to craft at least one, or keep up to the ratio
-        keepNearMax = Math.min(p.maxValue - val, p.maxValue * (opt.ratio || 0.995));
+        keepNearMax = Math.min(p.maxValue - val, p.maxValue * ratio);
         // opt.when takes precedence
         keep = Math.max(opt.when[name] || 0, keep);
 
@@ -491,50 +536,66 @@
 
       let multiple = 0;
       let multipleNearMax = 0;
-      if (!p.maxValue) {
+      //if (!p.maxValue || true) {
         if (p.value > keep)
           multiple = (p.value - keep) / val;
         if (multiple < canCraft)
           canCraft = multiple | 0;
         if (canCraft <= 0) {
-          debug(opt.debug, "nocraft canCraft", res.name, name, p.value, multiple, imNearMax, keep, keepNearMax);
+          debug(opt.debug, res.name, "nocraft canCraft", name, p.value, multiple, imNearMax, keep, keepNearMax);
           return;
         }
-      }
+      //}
       if (imNearMax) {
         nearMax = true;
         if (p.value > keepNearMax)
           multipleNearMax = (p.value - keepNearMax) / val;
         if (multipleNearMax > shouldCraft)
-          shouldCraft = multipleNearMax | 0;
+          shouldCraft = multipleNearMax;
       }
     }
     
+    let goalToCraft = res.name in keeps? Math.max(0, keeps[res.name] - r[res.name].value) : 0;
+    
     let howManyToCraft = 0;
     if (!priceHasMax) howManyToCraft = canCraft;
-    else if (nearMax) howManyToCraft = shouldCraft;
+    else if (goalToCraft) howManyToCraft = Math.min(canCraft, goalToCraft);
+    else if (nearMax) howManyToCraft = Math.min(canCraft, shouldCraft);
     
     if (opt.atatime) howManyToCraft = Math.min(howManyToCraft, opt.atatime);
     
     if (howManyToCraft < 1){
+      debug(opt.debug, res.name, 'howManyToCraft', howManyToCraft, priceHasMax, canCraft, nearMax, shouldCraft);
       return;
     }
     
-    let ratio = 1 + gamePage.getResCraftRatio({name : res.name});
+    if (howManyToCraft > canCraft)
+      debug(true, res.name, 'howManyToCraft:', howManyToCraft, 'can:', canCraft, 'should:', shouldCraft, 'max:', max);
+    
     let howmany = howManyToCraft;
     if (max) howmany = Math.min(howmany, Math.ceil((max - r[res.name].value) / ratio));
-    if (!opt.quiet && !opt.debug)
+    if (!opt.quiet)
       console.log('autocrafting', res.name, howmany, "ratio:", ratio.toFixed(2), howManyToCraft, "can", canCraft, "should", shouldCraft, "max", max);
+    
+    if (howmany < 1){
+      debug(opt.debug, res.name, 'howmany', priceHasMax, canCraft, nearMax, shouldCraft);
+      return;
+    }
+    let before = r[res.name].value;
     game.workshop.craft(res.name, Math.max(0, howmany | 0), true); // don't undo
+    let after = r[res.name].value;
+    
+    if (opt.debug)
+      debug(true, res.name, 'crafted:', howmany, 'howManyToCraft:', howManyToCraft, 'can:', canCraft, 'should:', shouldCraft, 'max:', max, 'actually:', after-before);
   }
   
-  function recordBtnPrice(btn) {
+  function recordBtnPrice(btn, inKeeps) {
     const prices = btn.model.prices;
     let missingCraftable = false;
     for (let {name, val} of prices) {
       if (!r[name].craftable) continue;
       
-      btnPrices[name] = Math.max(btnPrices[name] || 0, val);
+      inKeeps[name] = Math.max(inKeeps[name] || 0, val);
       if (r[name].value < val)
         missingCraftable = true;
     }
@@ -546,8 +607,25 @@
     for (let {name, val} of prices) {
       if (r[name].craftable) continue;
       
-      btnPrices[name] = Math.max(btnPrices[name] || 0, val);
+      inKeeps[name] = Math.max(inKeeps[name] || 0, val);
     }
+  }
+  
+  function btnGetHave(btn) {
+    if (!btn.model) return console.log("no model", btn) || 0;
+    const model = btn.model;
+    if (btn.race) return 0; // Trading
+
+    if (model.metaAccessor)
+      return model.metaAccessor.meta.val;
+    else if (model.metadata) {
+     if ('val' in model.metadata)
+        return model.metadata.val;
+      else if ('researched' in model.metadata)
+        return +model.metadata.researched;
+    }
+    //if (Math.random() < 0.05) console.log("btnGetHave", btn);
+    return 0;
   }
 
   // returns phase:
@@ -563,43 +641,46 @@
   const PHASE_AVAIL = 3;
   const PHASE_BUILT = 4;
   const PHASE_AT_MAX = 5;
-  function autobuild(btn, opt, recordPrice, keeps) {
+  function autobuild(btn, opt, recordPriceIn, keeps) {
     const model = btn.model;
     const meta = model.metadata;
-    if (!model.visible) return PHASE_NOT_AVAIL; // can't see yet
-    if (model.resourceIsLimited) return PHASE_NO_MAX; // don't have enough cap yet
-    if (meta && (meta.researched || (meta.on && meta.noStackable))) return PHASE_AT_MAX; // have one, can't build more
-    if (!model.enabled) {
-      if (recordPrice && model.prices) {
-        recordBtnPrice(btn);
-      }
-      return PHASE_NO_RES; // can't build yet
-    }
     
     let name = "";
     if (btn.tab) name = btn.tab.tabName;
     else name = btn;
 
     if (!opt.when) opt.when = {};
-
-    if (!matchWhen({when: opt.when, prices: pairsToObj(model.prices), priceMult: opt.priceMult || 1, keeps, debug: opt.debug}))
-      return PHASE_NO_RES; // debug(opt.debug, name, "when", btn.model.prices, keeps);
-    if (opt.max && model.metaAccessor.meta.val >= opt.max)
+    
+    let have = btnGetHave(btn);
+    
+    if (opt.max && have >= opt.max)
       return PHASE_AT_MAX;
+    
+    if (meta && (meta.researched || (meta.on && meta.noStackable))) return PHASE_AT_MAX; // have one, can't build more
+    if (!model.visible) return PHASE_NOT_AVAIL; // can't see yet
+    if (model.resourceIsLimited) return PHASE_NO_MAX; // don't have enough cap yet
+    if (!model.enabled) {
+      if (recordPriceIn && model.prices) {
+        recordBtnPrice(btn, recordPriceIn);
+      }
+      return PHASE_NO_RES; // can't build yet
+    }
 
-    let before = 0, after = 0;
-    if (btn.model && model.metaAccessor)
-      before = btn.model.metaAccessor.meta.val;
-    btn.domNode.click();
+    if (!matchWhen({name, when: opt.when, prices: pairsToObj(model.prices), priceMult: opt.priceMult || 1, keeps, debug: opt.debug}))
+      return PHASE_NO_RES; // debug(opt.debug, name, "when", btn.model.prices, keeps);
+
+    let before = have, after = 0;
+    if (!opt.dry)
+      btn.domNode.click();
 
     if (!opt.quiet) {
       if (btn.race)
         console.log("autotrade", btn.race.name);
       else if (model.metadata && model.metaAccessor) {
         if (before != model.metaAccessor.meta.val)
-          console.log("autobuild", meta.name, before, '->', model.metaAccessor.meta.val, name);
+          console.log("autobuild", meta.name, before, '->', btnGetHave(btn), name);
       } else if (model.metadata)
-        console.log("autobuild", meta.name, name);
+        console.log("autobuild", meta.name, before, '->', btnGetHave(btn), name);
       else
         console.log("autoclick", model.name, name);
     }
@@ -611,13 +692,19 @@
   
   function wizard() {
     if (!game || !game.workshop) return;
+    
+    vis.debug = [];
 
     if (Math.random() < 0.1) craftCache = {}; // seems to get messed up sometimes
     if (Math.random() < 0.1) loadButtons(); // seems to get messed up sometimes
 
     // auto hunt
-    if (auto.hunt && r.manpower.value > r.manpower.maxValue * 0.99)
-      game.village.huntMultiple((r.manpower.value / 100 / 1) | 0);
+    if (auto.hunt && r.manpower.value > r.manpower.maxValue * 0.99) {
+      let hunts = r.manpower.value / 100;
+      if (hunts > 40)
+        hunts /= 2;
+      game.village.huntMultiple(hunts | 0);
+    }
 
     // auto observe
     if (auto.observe && game.calendar.observeBtn)
@@ -625,10 +712,11 @@
 
     // auto praise
     // TODO: Only do if there is nothing to buy on the Religion tab?
+    //if (auto.praise && (r.faith.value > r.faith.maxValue * 0.99 || r.faith.value > r.faith.perTickCached * 100))
     if (auto.praise && r.faith.value > r.faith.maxValue * 0.99)
       game.religion.praise();
 
-    btnPrices = {};
+    let goalKeeps = Object.create(keeps);
     
     
     if (auto.goalbuild) {
@@ -646,7 +734,7 @@
             })
             continue;
           }
-          let phase = autobuild(buttons[k], goal.btns[k], true, {});
+          let phase = autobuild(buttons[k], goal.btns[k], goalKeeps, keeps);
           if (phase != PHASE_AT_MAX) {
             stopHere = true;
             vis.currGoalList.push({
@@ -663,36 +751,36 @@
       }
     }
     
+    let afterGoalKeeps = Object.create(goalKeeps);
     
     if (auto.science) {
       for (let k in buttons) {
         if (k.slice(0, 8) == "Science_")
-          autobuild(buttons[k], {}, true, {});
+          autobuild(buttons[k], {}, afterGoalKeeps, goalKeeps);
       }
     }
 
     if (auto.workshop) {
       for (let k in buttons) {
         if (k.slice(0, 9) == "Workshop_")
-          autobuild(buttons[k], {}, true, {});
+          autobuild(buttons[k], {}, afterGoalKeeps, goalKeeps);
       }
     }
     
     if (auto.religion) {
       for (let k in buttons) {
         if (k.slice(0, 9) == "Religion_") {
-          autobuild(buttons[k], {}, true, {});
+          autobuild(buttons[k], {}, afterGoalKeeps, goalKeeps);
         }
       }
     }
     
     // hack to allow compendium and blueprint to still be crafted
-    //if (btnPrices.copendium && btnPrices.science)
-    //  btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 10000 - 1000);
-    //if (btnPrices.blueprint && btnPrices.science)
-      btnPrices.science = Math.min(btnPrices.science, r.science.maxValue - 25000 - 100);
-    
-    let keepsAndPrices = Object.assign({}, keeps, btnPrices);
+    //if (afterGoalKeeps.copendium && afterGoalKeeps.science)
+    //  afterGoalKeeps.science = Math.min(afterGoalKeeps.science, r.science.maxValue - 10000 - 1000);
+    //if (afterGoalKeeps.blueprint && afterGoalKeeps.science)
+    if (r.science.maxValue > 25000 + 100)
+      afterGoalKeeps.science = Math.min(afterGoalKeeps.science, r.science.maxValue - 25000 - 100);
     
 
     if (auto.craft) {
@@ -702,7 +790,7 @@
           console.error("No such craft: ", k);
           continue;
         }
-        autocraft(c, autocraftSettings[k], keepsAndPrices);
+        autocraft(c, autocraftSettings[k], afterGoalKeeps);
       }
     }
     
@@ -712,7 +800,7 @@
           //console.error("No such button: ", k);
           continue;
         }
-        autobuild(buttons[k], autobuildSettings[k], false, keepsAndPrices);
+        autobuild(buttons[k], autobuildSettings[k], false, afterGoalKeeps);
       }
     }
     
@@ -761,6 +849,10 @@
         let totalMin = 0;
         let belowMin = []; // jobs below min
         for (let [name, jobSpec] of Object.entries(village.jobs)) {
+          if (!jobSpec.min) continue;
+          const btn = buttons['Village_' + name];
+          if (!(btn && btn.model.visible && btn.model.enabled)) continue;
+          
           let assigned = jobsMap[name].value;
           if (jobSpec.min)
             totalMin += jobSpec.min;
@@ -775,6 +867,8 @@
         let belowRatio = []; // jobs below ratio
         for (let [name, jobSpec] of Object.entries(village.jobs)) {
           if (!jobSpec.ratio) continue;
+          const btn = buttons['Village_' + name];
+          if (!(btn && btn.model.visible && btn.model.enabled)) continue;
           
           let assigned = jobsMap[name].value;
           let want = kittensPerRatio * jobSpec.ratio;
@@ -790,20 +884,42 @@
         belowMin.sort((a, b) => b.below - a.below);
         belowRatio.sort((a, b) => b.below - a.below);
         
+        let assigned = 0;
+        
         // Just assign one kitten at a time for now.
         if (belowMin.length) {
-          console.log('village assign <min', belowMin[0].job.name, belowMin);
-          game.village.assignJob(belowMin[0].job);
-        } else if (belowRatio.length) {
-          console.log('village assign <ratio', belowRatio[0].job.name, belowRatio);
-          game.village.assignJob(belowRatio[0].job);
+          //game.village.assignJob(belowMin[0].job);
+          for (let bjob of belowMin) {
+            const btn = buttons['Village_' + bjob.job.name];
+            if (btn && btn.model.visible && btn.model.enabled) {
+              console.log('village assign <min', bjob.job.name, belowMin);
+              btn.domNode.click();
+              assigned ++;
+              break;
+            }
+          }
+        }
+        if (belowRatio.length && !assigned) {
+          for (let bjob of belowRatio) {
+            const btn = buttons['Village_' + bjob.job.name];
+            if (btn && btn.model.visible && btn.model.enabled) {
+              console.log('village assign <ratio', bjob.job.name, belowRatio);
+              btn.domNode.click();
+              assigned ++;
+              break;
+            }
+          }
+        }
+        
+        if (!assigned && (belowMin.length || belowRatio.length)) {
+          console.log('village not assign?', belowMin, belowRatio);
         }
       }
       //game.village.maxKittens
       //game.village.sim.kittens
     }
     
-    vis.btnPrices = btnPrices;
+    vis.btnPrices = afterGoalKeeps;
   }
 
 }())
