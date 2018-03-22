@@ -4,8 +4,11 @@
   let vis = {
     jobsTotalRatio: 0,
     jobsNext: "",
+    jobsWantSet: false,
     jobsWant: {},
-    btnPrices: {},
+    autoUnassigned: window.wizardLastUnassigned,
+    autoAssigned: window.wizardLastAssigned,
+    goals: {},
     currGoal: null,
     currGoalList: [],
     debug: [],
@@ -15,6 +18,7 @@
   for (let job of game.village.jobs) {
     jobsMap[job.name] = job;
   }
+  window.jobsMap = jobsMap;
   
   Object.defineProperty(vis, "game", {
     configurable: false,
@@ -50,14 +54,15 @@
   </div>
   <div id="jobs">
     jobs (total {{jobsTotalRatio}}):
+    v {{autoUnassigned}} ^ {{autoAssigned}}
     <table>
-      <tr v-for="jobs, name in jobsWant" :class="{want: jobs.want > jobs.have}" ><td>{{name}}: </td><td>{{jobs.want.toFixed(1)}} / {{jobs.have}}</td></tr>
+      <tr v-for="job, name in jobsWant" :class="{want: job.wanted}" ><td>{{name}}: </td><td>{{job.wantKittens.toFixed(1)}} / {{job.have}}</td><td>{{job.want(goals)}}</td></tr>
     </table>
   </div>
   <div id="prices">
-    btn prices:
+    goals:
     <table>
-      <tr v-for="price, name in btnPrices" :class="{want: price > have(name)}" ><td>{{name}}: </td><td>{{display(price)}} / {{display(have(name))}}</td></tr>
+      <tr v-for="price, name in goals" :class="{want: price > have(name)}" ><td>{{name}}: </td><td>{{display(price)}} / {{display(have(name))}}</td></tr>
     </table>
   </div>
 <div id="debug">
@@ -153,10 +158,10 @@
   padding: 0 3px;
 }
 #vueAppEl #debug {
-  position: absolute;
+  position: fixed;
   background-color: white;
-  left: -500px;
-  bottom: -40px;
+  left: 0px;
+  bottom: 0px;
 }
 #vueAppEl #debug pre {
   margin: 0;
@@ -167,8 +172,9 @@
   
   
 
+  const wizardInterval = 500;
   if (window.wizardHelper) clearInterval(window.wizardHelper);
-  window.wizardHelper = setInterval(wizard, 500);
+  window.wizardHelper = setInterval(wizard, wizardInterval);
   
   const auto = {
     hunt: true,
@@ -189,17 +195,24 @@
     promoteLeader: true,
     
     autojobs: true,
-    //removeFromJobs: false, // TODO: not yet used
+    removeFromJobs: true,
     jobs: {
-      farmer: {min: 3, ratio: 15}, // need a minimum to produce enough food during cold winter -90%
-      woodcutter: {ratio: 20}, // needed when wood/beam/scaffold is low and needed
-      miner: {ratio: 17}, // needed when minerals/slab are needed. Production must be positive, and slab is needed for zebras
-      scholar: {ratio: 13}, // only needed if science is low or science is being used (compendiums/blueprints)
-      hunter: {min: 1, ratio: 15}, // always needed, needed more when things need parchment/manuscript/compendium/blueprint (generally when manuscript is low, if manuscript is high then science can't keep up)
-      priest: {ratio: 8},
-      geologist: {ratio: 12}, // needed when coal prod < half of iron prod
+      farmer:     {min: 3, priority: 10, ratio: 15, want: g => game.calcResourcePerTick('catnip', game.calendar.seasons[3]) < 20}, // need a minimum to produce enough food during cold winter -90%
+      
+      woodcutter: {ratio: 20, priority: 5, want: g => r.wood.value < r.wood.maxValue * 0.9 || r.beam.value < (g.beam || 100000) || r.wood.perTickCached < 20 }, // needed when wood/beam/scaffold is low and needed
+      miner:      {min: 1, ratio: 17, priority: 5, want: g => r.slab.value < (g.slab || 10000) || r.minerals.value < (g.minerals || r.minerals.maxValue * 0.9) || r.minerals.perTickCached < r.wood.perTickCached * 0.9 }, // needed when minerals/slab are needed. Production must be positive, and slab is needed for zebras
+      scholar:    {ratio: 13, priority: 5, want: g => r.science.value < r.science.maxValue }, // only needed if science is low or science is being used (compendiums/blueprints)
+      hunter:     {min: 1, ratio: 15, want: g => "todo"}, // always needed, needed more when things need parchment/manuscript/compendium/blueprint (generally when manuscript is low, if manuscript is high then science can't keep up)
+      geologist:  {ratio: 35, priority: 5, want: g => r.coal.perTickCached < r.iron.perTickCached * 0.5}, // needed when coal prod < half of iron prod
+      
+      priest:     {ratio: 12, priority: 0, want: g => true},
     },
   };
+  
+  for (let [name, spec] of Object.entries(village.jobs)) {
+    spec.wantKittens = 0;
+    spec.wanted = false;
+  }
   
   const totalRatio = Object.values(village.jobs).map(j => j.ratio).reduce((a, b) => a + b, 0);
   vis.jobsTotalRatio = totalRatio;
@@ -209,10 +222,16 @@
     {name: "Mine", btns: {Bonfire_mine: {max: 1}}},
     {name: "Smelter", btns: {Bonfire_smelter: {max: 1}}},
     {name: "Workshop", btns: {Bonfire_workshop: {max: 1}}},
-    {name: "Coal!", btns: {Workshop_deepMining: {}, Workshop_coalFurnace: {}}},
+    {name: "Reinforce", btns: {Workshop_reinforcedBarns: {}}},
+    {name: "Coal!", btns: {Workshop_deepMining: {}, Workshop_coalFurnace: {}, Bonfire_warehouse: {max: 9}, Bonfire_barn: {max: 9}}},
+    {name: "Use less Coal", btns: {Workshop_combustionEngine: {}}},
+    {name: "Geology", btns: {Science_archeology: {}}},
+    {name: "Electricity", btns: {Science_electricity: {}}},
     {name: "Space!", btns: {Space_orbitalLaunch: {}}},
     {name: "Satellite", btns: {Space_sattelite: {max: 1}}},
     {name: "Moon", btns: {Space_moonMission: {}, Bonfire_oilWell: {max: 28}}},
+    {name: "Accelerator", btns: {Bonfire_accelerator: {max: 1}}},
+    {name: "Reactor", btns: {Bonfire_reactor: {max: 1}}},
     {name: "Lunar Outpost", btns: {Space_moonOutpost: {max: 1}, Bonfire_oilWell: {max: 34}}},
     {name: "Dune", btns: {Space_duneMission: {}}},
     {name: "Piscine", btns: {Space_piscineMission: {}}},
@@ -233,7 +252,7 @@
     // Storage
     Bonfire_barn: {},
     Bonfire_warehouse: {},
-    Bonfire_harbor: {},
+    Bonfire_harbor: {priceMult: 3},
     
     // Science
     Bonfire_library: {},
@@ -247,7 +266,7 @@
     Bonfire_steamworks: {max: 15, priceMult: 3},
     Bonfire_magneto: {max: 15, priceMult: 3},
     Bonfire_quarry: {priceMult: 2},
-    Bonfire_calciner: {priceMult: 2, dry: true},
+    Bonfire_calciner: {},
     Bonfire_oilWell: {priceMult: 2},
     Bonfire_accelerator: {max: 2},
     Bonfire_reactor: {max: 1},
@@ -277,7 +296,7 @@
 
   // Science, Workshop and Religion ignore this
   const keeps = {
-    catnip: 1000,
+    get catnip() { return 400 * r.kittens.value },
     ship: 2000,
     //beam: 200,
     //gold: 5000,
@@ -296,19 +315,19 @@
 
     slab: {quiet: true},
 
-    steel: {when: {}, quiet: true, debug: true},
-    gear: {max: 1, when: {steel: 1}},
+    steel: {when: {}, quiet: true, debug: false},
+    gear: {max: 1, when: {steel: 1}, quiet: true},
     alloy: {max: 2}, // titanium won't max out for a while
     concrate: {max: 10},
-    plate: {quiet: true, debug: true},
+    plate: {quiet: true, debug: false},
     
     ship: {when: {scaffold: 5000, plate: 600}},
     
     kerosene: {},
 
     parchment: {max: 10000, quiet: true},
-    manuscript: {max: 50000, quiet: true, debug: true},
-    compedium: {get max(){return (r.blueprint.unlocked && r.blueprint.value < 300)? r.blueprint.value * 8 + 25 : 100000}, quiet: false, debug: true}, // SIC
+    manuscript: {max: 50000, quiet: true, debug: false},
+    compedium: {get max(){return (r.blueprint.unlocked && r.blueprint.value < 300)? r.blueprint.value * 8 + 25 : 100000}, quiet: true}, // SIC
     blueprint: {max: 300, when: {get compedium(){return r.blueprint.value * 8}}, quiet: true},
   };
   
@@ -324,7 +343,6 @@
   window.r = r;
 
   var craftCache = {};
-
   function getCraft(k) {
     let c = craftCache[k];
     if (!c)
@@ -332,6 +350,52 @@
     return c;
   }
   
+  var resourcesSorted = [];
+  var resourcesKeyed = {};
+  function sortResources() {
+    resourcesSorted = [];
+    resourcesKeyed = {};
+    let list = [];
+
+    for (let name in r) {
+      let res = r[name];
+      let craft = getCraft(name);
+      if (name == "wood") craft = null; // for the purposes of resourcesSorted, ignore wood
+      let prices = craft? pairsToObj(craft.prices) : null;
+      let tier = !craft? 1 : Infinity;
+      let resInfo = {name, res, craft, prices, tier};
+      if (craft)
+        list.push(resInfo);
+      else {
+        resourcesKeyed[resInfo.name] = resInfo;
+        resourcesSorted.push(resInfo);
+      }
+    }
+
+    let nextList = list;
+    while (nextList.length) {
+      list = nextList;
+      nextList = [];
+
+      list: for (let resInfo of list) {
+        if (resInfo.prices)
+          for (let price in resInfo.prices){
+            let pInfo = resourcesKeyed[price];
+            if (!pInfo) {
+              nextList.push(resInfo);
+              continue list;
+            }
+            //console.log('tier', resInfo.name, pInfo.name, resInfo.tier, pInfo.tier, pInfo);
+            resInfo.tier = Math.min(resInfo.tier, pInfo.tier + 1);
+          }
+        resourcesKeyed[resInfo.name] = resInfo;
+        resourcesSorted.push(resInfo);
+      }
+    }
+  }
+  sortResources();
+  window.resourcesSorted = resourcesSorted;
+
   function switchTabId(tabId) {
     game.ui.activeTabId = tabId;
     game.ui.render();
@@ -432,6 +496,57 @@
     }
   }
 
+  // this function tries to set up goals and crafting so that
+  // everything gets crafted only when it has all the resources
+  // to craft everything, and otherwise only crafts the things
+  // who's prices have a cap.
+  function collectResources({prices, keeps, goals}) {
+    // tier 3 resources are not allowed in goals until their requirements are all met
+    let tier3 = {};
+    let minNeedTier = Infinity;
+    for (let i = resourcesSorted.length-1; i >= 0; i--) {
+      let {name, tier, craft, prices: craftPrices} = resourcesSorted[i];
+      let price = prices[name];
+      if (!price) continue;
+
+      let keep = keeps[name] || 0;
+      let have = r[name].value - keep;
+      let stillNeed = price - have;
+      if (stillNeed > 0) {
+        minNeedTier = Math.min(minNeedTier, tier);
+        if (craft) {
+          let craftRatio = 1 + game.getResCraftRatio({name});
+          let stillNeedToCraft = Math.ceil(stillNeed / craftRatio);
+          for (let cpriceName in craftPrices) {
+            prices[cpriceName] = (prices[cpriceName] || 0) + craftPrices[cpriceName] * stillNeedToCraft;
+          }
+        } else {
+          // uncraftable resource
+        }
+      }
+
+      // need to set goal even if we have all we need, to prevent
+      // other mechanisms from thinking they don't need it.
+      if (tier < 3) {
+        goals[name] = Math.max(goals[name] || 0, price + keep);
+      } else {
+        tier3[name] = price;
+      }
+    }
+
+    if (minNeedTier >= 3) { // > is to include Infinity
+      for (let name in tier3) {
+        let price = tier3[name];
+        let keep = keeps[name] || 0;
+        goals[name] = Math.max(goals[name] || 0, price + keep);
+      }
+    }
+
+    // returns true if we have everything already
+    return minNeedTier === Infinity;
+  }
+  window.collectResources = collectResources;
+
   
   function matchWhen({when, prices={}, keeps, dbg=false, priceMult=1, name}) {
     for (let wname in when) {
@@ -467,13 +582,13 @@
       let have = r[keepRes].value;
       let keep = keeps[keepRes];
       if (have < keep + price * priceMult) {
-        debug(dbg, "matchWhen", name, keepRes, have, price, keep);
+        debug(dbg, name, "matchWhen", keepRes, have, price, keep);
         return false;
       }
     }
-    /*if (prices.oil && name != "kerosene")
+    if (prices.oil && name != "kerosene")
       debug(true, "matchWhen oil", name, r.oil.value, when.oil, prices.oil, keeps.oil, keeps);
-    if (prices.alloy)
+    /*if (prices.alloy)
       debug(true, "matchWhen alloy", name, r.alloy.value, when.alloy, prices.alloy, keeps.alloy, keeps);
       */
     return true;
@@ -490,7 +605,7 @@
     let price = game.workshop.getCraftPrice(res);
 
     if (!matchWhen({name: res.name, when: opt.when, prices: pairsToObj(price), keeps, dbg: opt.debug, priceMult: opt.priceMult || 1}))
-      return debug(opt.debug, res.name, 'when');
+      return; // debug(opt.debug, res.name, 'when');
 
     let priceHasMax = false;
     let nearMax = false;
@@ -559,7 +674,7 @@
     
     let howManyToCraft = 0;
     if (!priceHasMax) howManyToCraft = canCraft;
-    else if (goalToCraft) howManyToCraft = Math.min(canCraft, goalToCraft);
+    //else if (goalToCraft) howManyToCraft = Math.min(canCraft, goalToCraft);
     else if (nearMax) howManyToCraft = Math.min(canCraft, shouldCraft);
     
     if (opt.atatime) howManyToCraft = Math.min(howManyToCraft, opt.atatime);
@@ -589,13 +704,15 @@
       debug(true, res.name, 'crafted:', howmany, 'howManyToCraft:', howManyToCraft, 'can:', canCraft, 'should:', shouldCraft, 'max:', max, 'actually:', after-before);
   }
   
-  function recordBtnPrice(btn, inKeeps) {
+  function recordBtnPrice(btn, inGoals, keeps) {
     const prices = btn.model.prices;
-    let missingCraftable = false;
+    return collectResources({prices: pairsToObj(prices), keeps, goals: inGoals});
+    /*let missingCraftable = false;
     for (let {name, val} of prices) {
       if (!r[name].craftable) continue;
       
       inKeeps[name] = Math.max(inKeeps[name] || 0, val);
+      if (isNaN(inKeeps[name])) console.log("inKeeps", inKeeps);
       if (r[name].value < val)
         missingCraftable = true;
     }
@@ -608,7 +725,8 @@
       if (r[name].craftable) continue;
       
       inKeeps[name] = Math.max(inKeeps[name] || 0, val);
-    }
+      if (isNaN(inKeeps[name])) console.log("inKeeps", inKeeps);
+    }*/
   }
   
   function btnGetHave(btn) {
@@ -661,7 +779,7 @@
     if (model.resourceIsLimited) return PHASE_NO_MAX; // don't have enough cap yet
     if (!model.enabled) {
       if (recordPriceIn && model.prices) {
-        recordBtnPrice(btn, recordPriceIn);
+        recordBtnPrice(btn, recordPriceIn, keeps);
       }
       return PHASE_NO_RES; // can't build yet
     }
@@ -716,7 +834,7 @@
     if (auto.praise && r.faith.value > r.faith.maxValue * 0.99)
       game.religion.praise();
 
-    let goalKeeps = Object.create(keeps);
+    let goalKeeps = Object.assign({}, keeps);
     
     
     if (auto.goalbuild) {
@@ -751,7 +869,7 @@
       }
     }
     
-    let afterGoalKeeps = Object.create(goalKeeps);
+    let afterGoalKeeps = Object.assign({}, goalKeeps);
     
     if (auto.science) {
       for (let k in buttons) {
@@ -779,7 +897,7 @@
     //if (afterGoalKeeps.copendium && afterGoalKeeps.science)
     //  afterGoalKeeps.science = Math.min(afterGoalKeeps.science, r.science.maxValue - 10000 - 1000);
     //if (afterGoalKeeps.blueprint && afterGoalKeeps.science)
-    if (r.science.maxValue > 25000 + 100)
+    if (afterGoalKeeps.science && r.science.maxValue > 25000 + 100)
       afterGoalKeeps.science = Math.min(afterGoalKeeps.science, r.science.maxValue - 25000 - 100);
     
 
@@ -806,11 +924,6 @@
     
     
     if (auto.village) {
-      vis.jobsWant = {};
-      Object.entries(village.jobs).forEach(([job, spec]) => {
-        vis.jobsWant[job] = {want: (spec.ratio / totalRatio) * game.village.maxKittens, have: jobsMap[job].value};
-      });
-
       
       if (village.leader && !game.village.leader) {
         // matching trait and job (if exists)
@@ -843,24 +956,56 @@
         game.village.sim.promote(game.village.leader);
       }
       
-      if (village.autojobs && game.village.getFreeKittens() > 0) {
+      let autoAssignedKitten = false;
+      
+      // Sometimes buttons are disabled for one tick, wait for them to be re-enabled
+      // Note that Engineer follows different rules, but we currently don't manage Engineer
+      let countVisible = 0;
+      let countEnabled = 0;
+      for (let [name, jobSpec] of Object.entries(village.jobs)) {
+        const btn = buttons['Village_' + name];
+        if (!(btn && btn.model.visible)) continue;
+        countVisible ++;
+        if (!btn.model.enabled) continue;
+        countEnabled ++;
+      }
+      
+      const freeKittens = game.village.getFreeKittens();
+      
+      let aboveRatio = []; // jobs way above ratio, or not wanted
+      
+      if (village.autojobs) {
         // which jobs need kittens. below .min takes priority, then lowest relative to ratio
         let maxRatio = 0;
         let totalMin = 0;
         let belowMin = []; // jobs below min
         for (let [name, jobSpec] of Object.entries(village.jobs)) {
-          if (!jobSpec.min) continue;
+          jobSpec.wanted = false;
+          jobSpec.wantKittens = 0;
+          
           const btn = buttons['Village_' + name];
-          if (!(btn && btn.model.visible && btn.model.enabled)) continue;
           
           let assigned = jobsMap[name].value;
-          if (jobSpec.min)
-            totalMin += jobSpec.min;
-          if (assigned < jobSpec.min)
-            belowMin.push({job: jobsMap[name], below: jobSpec.min - assigned});
           
+          jobSpec.have = assigned;
+          
+          if (!(btn && btn.model.visible)) continue;
+          if (!jobSpec.want(afterGoalKeeps)) continue;
           if (jobSpec.ratio)
             maxRatio += jobSpec.ratio;
+          
+          
+          if (!jobSpec.min) continue;
+          
+          jobSpec.wantKittens = jobSpec.min;
+          
+          
+          if (jobSpec.min)
+            totalMin += jobSpec.min;
+          if (assigned < jobSpec.min) {
+            belowMin.push({job: jobsMap[name], below: jobSpec.min - assigned});
+            jobSpec.wanted = "min";
+          }
         }
         
         let kittensPerRatio = (game.village.maxKittens /*- totalMin*/) / maxRatio;
@@ -868,58 +1013,119 @@
         for (let [name, jobSpec] of Object.entries(village.jobs)) {
           if (!jobSpec.ratio) continue;
           const btn = buttons['Village_' + name];
-          if (!(btn && btn.model.visible && btn.model.enabled)) continue;
           
           let assigned = jobsMap[name].value;
           let want = kittensPerRatio * jobSpec.ratio;
+          if (want > 100) {
+            //console.log("Large wantKittens", {maxRatio, kittensPerRatio, ratio: jobSpec.ratio, assigned, want});
+          }
           
-          //if (jobSpec.min)
-            // TODO: want -= job.min or something like it?
+          if (!(btn && btn.model.visible)) continue;
+          if (!jobSpec.want(afterGoalKeeps)) {
+            if (assigned > 0)
+              aboveRatio.push({job: jobsMap[name], below: want - assigned, want, assigned});
+            continue;
+          }
+          
+          jobSpec.wantKittens = want;
+          jobSpec.have = assigned;
           
           if (assigned < want) {
-            belowRatio.push({job: jobsMap[name], below: want - assigned});
+            belowRatio.push({job: jobsMap[name], below: assigned, want, assigned});
+            jobSpec.wanted = "ratio";
+          } else if (assigned - 1 > want) {
+            aboveRatio.push({job: jobsMap[name], below: assigned, want, assigned});
           }
         }
+        
+        vis.jobsWant = village.jobs;
         
         belowMin.sort((a, b) => b.below - a.below);
-        belowRatio.sort((a, b) => b.below - a.below);
+        belowRatio.sort((a, b) => a.below - b.below);
+        aboveRatio.sort((a, b) => a.below - b.below);
+        debug(true, "aboveRatio", JSON.stringify(aboveRatio.map(j => ({[j.job.name]: j.below}))));
         
-        let assigned = 0;
         
-        // Just assign one kitten at a time for now.
-        if (belowMin.length) {
-          //game.village.assignJob(belowMin[0].job);
-          for (let bjob of belowMin) {
-            const btn = buttons['Village_' + bjob.job.name];
-            if (btn && btn.model.visible && btn.model.enabled) {
-              console.log('village assign <min', bjob.job.name, belowMin);
-              btn.domNode.click();
-              assigned ++;
-              break;
+        if ((countEnabled == countVisible && freeKittens > 0) || vis.jobsWant !== village.jobs) {
+          debug(true, "autojobs", freeKittens);
+
+
+          debug(true, "below", JSON.stringify(belowMin), JSON.stringify(belowRatio));
+
+          let assigned = 0;
+
+          // Just assign one kitten at a time for now.
+          if (belowMin.length && freeKittens > 0) {
+            //game.village.assignJob(belowMin[0].job);
+            for (let bjob of belowMin) {
+              const btn = buttons['Village_' + bjob.job.name];
+              if (btn && btn.model.visible && btn.model.enabled) {
+                debug('village assign <min', bjob.job.name, belowMin);
+                vis.autoAssigned = window.wizardLastAssigned = bjob.job.name;
+                btn.domNode.click();
+                assigned ++;
+                break;
+              }
             }
           }
-        }
-        if (belowRatio.length && !assigned) {
-          for (let bjob of belowRatio) {
-            const btn = buttons['Village_' + bjob.job.name];
-            if (btn && btn.model.visible && btn.model.enabled) {
-              console.log('village assign <ratio', bjob.job.name, belowRatio);
-              btn.domNode.click();
-              assigned ++;
-              break;
+          if (belowRatio.length && !assigned && freeKittens > 0) {
+            for (let bjob of belowRatio) {
+              const btn = buttons['Village_' + bjob.job.name];
+              if (btn && btn.model.visible && btn.model.enabled) {
+                debug(true, 'village assign <ratio', bjob.job.name, belowRatio);
+                vis.autoAssigned = window.wizardLastAssigned = bjob.job.name;
+                btn.domNode.click();
+                assigned ++;
+                break;
+              }
             }
           }
-        }
-        
-        if (!assigned && (belowMin.length || belowRatio.length)) {
-          console.log('village not assign?', belowMin, belowRatio);
-        }
+
+          autoAssignedKitten = !!assigned;
+
+          if (!assigned && (belowMin.length || belowRatio.length) && freeKittens > 0) {
+            console.log('village not assign?', belowMin, belowRatio);
+          }
+        } else debug(true, "no autojobs", village.autojobs, countEnabled == countVisible, freeKittens > 0, vis.jobsWant !== village.jobs);
       }
-      //game.village.maxKittens
-      //game.village.sim.kittens
+      
+      /*Object.entries(village.jobs).forEach(([job, spec]) => {
+        vis.jobsWant[job] = {want: (spec.ratio / totalRatio) * game.village.maxKittens, have: jobsMap[job].value};
+      });*/
+
+      
+      if (village.removeFromJobs && !autoAssignedKitten && window.wizardLastAssigned !== "") {
+        const now = new Date();
+        const lastRemovedAt = +(window.wizardLastRemovedAt || 0);
+        const waitTime = (window.wizardLastRemoved == window.wizardLastAssigned? 30000 : 2000);
+        if (now > lastRemovedAt + waitTime) {
+          // randomly pick a job and remove a kitten from the job
+          // it will get re-assigned. This way kittens will slowly move to the jobs that need them.
+          
+          let name = window.wizardLastRemoved;
+          if (!name || name == window.wizardLastAssigned || !jobsMap[name].value) {
+            //name = aboveRatio[0].job.name;
+            let entries = aboveRatio? aboveRatio.map(a => [a.job.name]) : Object.entries(village.jobs).filter(([name]) => jobsMap[name].value);
+            let pick = (Math.random() * entries.length) | 0;
+            if (pick < entries.length)
+              name = entries[pick][0];
+            else
+              name = "";
+          }
+          
+          if (name && jobsMap[name].value) {
+            buttons['Village_' + name].unassignLinks.unassign.link.click();
+            //console.log("Unassigned", name);
+
+            vis.autoUnassigned = window.wizardLastRemoved = name;
+            window.wizardLastRemovedAt = new Date();
+            window.wizardLastAssigned = "";
+          } else debug(true, "cannot remove", name);
+        } else debug(true, "removeFromJobs", "waiting", (lastRemovedAt + waitTime) - now, waitTime, window.wizardLastRemoved, window.wizardLastAssigned);
+      } else debug(true, "removeFromJobs", village.removeFromJobs, !autoAssignedKitten, window.wizardLastAssigned !== "");
     }
     
-    vis.btnPrices = afterGoalKeeps;
+    vis.goals = afterGoalKeeps;
   }
 
 }())
